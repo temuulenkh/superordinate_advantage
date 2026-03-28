@@ -1,0 +1,428 @@
+---
+title: "LLM analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(here)
+library(xtable)
+library(kableExtra)
+source("helper_functions.R", local = knitr::knit_global())
+select <- dplyr::select
+```
+
+Set up some helper functions to compute gain for a category:
+
+```{r}
+# safe log
+safelog <- function(p) {
+  ifelse(is.na(p) | p == 0, 0, -log2(p))
+}
+
+# gain estimation function
+gain_identity <- function(p_c_x, p_t, m_t) {
+  gain <- p_t / m_t * safelog(p_c_x)
+}
+```
+
+Prepare prior need probability data:
+
+```{r corpus freq}
+# load feature and frequency data
+d <- read_csv(here("data", "d_leuven.csv"), show_col_types = FALSE)
+
+# prepare a prior need data
+p_c <- d %>%
+  group_by(category, level, domain) %>%
+  summarise(p_c = sum(p)) %>%
+  ungroup()
+```
+
+## Identity model
+
+Prepare a dataframe on context-dependent probabilities:
+
+```{r}
+probs <- read_csv(here("data/probs", "all_probs.csv"), show_col_types = FALSE) 
+
+p_c_x <- probs %>%
+  # create unique sentence identifier
+  mutate(sent_id = paste0(domain, "_", row_id, "_", target_word)) %>%
+  select(sent_id, target_word, probe_word, prob_norm) %>%
+  # add category information
+  left_join(d %>% distinct(probe_word=target_word, probe_category=category), by = "probe_word") %>%
+  group_by(sent_id, target_word, probe_category) %>%
+  # compute probability of category c given context x
+  summarise(p_c_x = sum(prob_norm)) %>%
+  ungroup() %>%
+  left_join(d %>% distinct(target_word, target_category=category), by = "target_word") %>%
+  # retain categories that correspond to target words
+  filter(target_category == probe_category) %>%
+  select(sent_id, category=target_category, target_word, p_c_x)
+
+d_gain <- p_c %>% 
+  left_join(p_c_x, by = "category") %>%
+  left_join(d %>% filter(level=="terminal") %>% distinct(target_word, target=category) , by = "target_word") %>%
+  left_join(p_c %>% distinct(target=category, p_t=p_c), by = "target") %>%
+  select(-target_word, -p_c) %>%
+  group_by(target) %>%
+  mutate(m_t=n_distinct(sent_id)) %>%
+  ungroup()
+```
+
+Compute gains:
+
+```{r}
+identity <- d_gain %>%
+  # apply gain estimation function
+  mutate(gain = gain_identity(p_c_x, p_t, m_t)) %>%
+  # sum across all targets that belong to category c
+  group_by(domain, level, category) %>%
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+```
+
+Visualise a plot for contextual probabilities:
+
+```{r, fig.height=2}
+plot <- d_gain %>%
+  mutate(level = factor(level, 
+                        levels = c("terminal", "intermediate", "starting"))) %>%
+  ggplot(aes(x = p_c_x)) +
+  geom_histogram() +
+  facet_grid(
+    . ~ level,
+    switch = "x",
+    labeller = as_labeller(c(
+      terminal = "p(t|x)",
+      intermediate = "p(i|x)",
+      starting = "p(s|x)"
+    ))
+  ) +
+  theme_classic() +
+  theme(
+    strip.background = element_blank(),
+    strip.placement = "outside",
+    axis.text.x = element_text(size = 8),
+    axis.text.y = element_text(size = 8),
+    strip.text.x = element_text(size = 10),
+    axis.line = element_blank(),
+    axis.title.x = element_blank()
+  )
+plot
+ggsave(here("output/figures", "contextual_probabilities.pdf"), plot, width = 17.5, height = 6, units = "cm")
+```
+
+The plot suggests that the T5 model can correctly infer superordinate categories most of the time (the rightmost panel shows many cases where $p(s|x)$ is close to one).
+
+Now summarise gain differences:
+
+```{r}
+id_bs <- identity %>%
+  t_greater_than_s() 
+id_bs %>% kable()
+
+id_bi <- identity %>%
+  t_greater_than_i()
+id_bi %>% kable()
+
+identity %>%
+  filter(domain == "animals") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+identity %>%
+  filter(domain == "artifacts") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+```
+
+Animals beat all their terminal level concepts and each five intermediate level concepts beat all their terminal level concepts. Artifacts beat all their terminal level categories except for car. Car has the highest frequency. All intermediate level categories also defeat their terminals in the artifact domain.
+
+## Feature model
+
+We ran `07_LLM_analysis_features.R` to compute gains based on features. Now load the results and summarise:
+
+```{r}
+features <- read_csv(here("output/results", "llm_analysis_features.csv"), show_col_types = FALSE)
+
+fe_bs <- features %>%
+  t_greater_than_s() 
+fe_bs %>% kable()
+
+fe_bi <- features %>%
+  t_greater_than_i
+fe_bi %>% kable()
+
+features %>%
+  filter(domain == "animals") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+features %>%
+  filter(domain == "artifacts") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+```
+
+Animals beat all their terminal level concepts and each five intermediate level concepts beat all their terminal level concepts. Artifacts beat all their terminal level categories except for car. Car has the highest frequency. All intermediate level categories also defeat their terminals in the artifact domain.
+
+Make tables:
+
+```{r}
+leuven_bs <- id_bs %>%
+  select(-t_greater_than_s, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    fe_bs %>%
+      select(-t_greater_than_s, -n_terminals) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  )
+
+leuven_bi <- id_bi %>%
+  select(-t_greater_than_i, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    fe_bi %>%
+      select(-t_greater_than_i, -n_terminals) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  )  %>%
+  left_join(d %>% select(category, domain) %>% unique(), by = "category") %>%
+  arrange(domain) %>% select(-domain)
+
+leuven_bs_tb <- xtable(leuven_bs, digits = c(0, 0, 2, 2, 2, 2))
+print(leuven_bs_tb, file = here("output", "tables", "leuven_t_minus_s_context.tex"), include.rownames = FALSE, comment = FALSE)
+
+leuven_bi_tb <- xtable(leuven_bi, digits = c(0, 0, 2, 2, 2, 2))
+print(leuven_bi_tb, file = here("output", "tables", "leuven_t_minus_i_context.tex"), include.rownames = FALSE, comment = FALSE)
+```
+
+## Spoken vs. written texts
+
+We compare results for spoken texts only and written texts only.
+
+```{r}
+spoken_types <- c("OTHERSP", "CONVRSN")
+
+probs <- probs %>%
+  mutate(modality = if_else(doc_type %in% spoken_types, "spoken", "written"))
+
+probs %>% 
+  distinct(modality, target_word) %>%
+  group_by(modality) %>%
+  summarise(n = n_distinct(target_word)) %>%
+  ungroup() %>%
+  kable()
+```
+
+There are 199 concepts for spoken texts and 253 concepts for written texts. So, we first need to renormalize prior need and contextual probabilities across 199 concepts for spoken texts and 253 concepts for written texts.
+
+```{r}
+# prepare contextual probabilities for spoken texts
+probs_spoken <- probs %>%
+  filter(modality == "spoken") %>%
+  # create unique sentence identifier
+  mutate(sent_id = paste0(domain, "_", row_id, "_", target_word)) %>%
+  select(sent_id, target_word, probe_word, prob_norm)
+
+targets_spoken <- unique(probs_spoken$target_word)
+
+probs_spoken <- probs_spoken %>%
+  # filter probe words so that we work with 199 concepts only
+  filter(probe_word %in% targets_spoken) %>%
+  # normalize contextual probabilities
+  group_by(sent_id, target_word) %>%
+  mutate(total = sum(prob_norm)) %>%
+  ungroup() %>%
+  mutate(prob_norm = prob_norm / total) %>%
+  select(-total)
+  
+# prepare a prior need data for spoken texts
+p_c_spoken <- d %>%
+  filter(target_word %in% targets_spoken)
+
+total_p <- p_c_spoken %>%
+  distinct(concept, p) %>%
+  summarise(total_p = sum(p)) %>%
+  pull(total_p)
+
+p_c_spoken <- p_c_spoken %>%
+  # normalize prior need probabilities
+  mutate(p = p / total_p) %>%
+  group_by(category, level, domain) %>%
+  summarise(p_c = sum(p), .groups = "drop")
+
+# prepare contextual probabilities for written texts
+probs_written <- probs %>%
+  filter(modality == "written") %>%
+  # create unique sentence identifier
+  mutate(sent_id = paste0(domain, "_", row_id, "_", target_word)) %>%
+  select(sent_id, target_word, probe_word, prob_norm)
+
+targets_written <- unique(probs_written$target_word)
+
+probs_written <- probs_written %>%
+  # filter probe words so that we work with 253 concepts only
+  filter(probe_word %in% targets_written) %>%
+  # normalize contextual probabilities
+  group_by(sent_id, target_word) %>%
+  mutate(total = sum(prob_norm)) %>%
+  ungroup() %>%
+  mutate(prob_norm = prob_norm / total) %>%
+  select(-total)
+  
+# prepare a prior need data for written texts
+p_c_written <- d %>%
+  filter(target_word %in% targets_written)
+
+total_p <- p_c_written %>%
+  distinct(concept, p) %>%
+  summarise(total_p = sum(p)) %>%
+  pull(total_p)
+
+p_c_written <- p_c_written %>%
+  # normalize prior need probabilities
+  mutate(p = p / total_p) %>%
+  group_by(category, level, domain) %>%
+  summarise(p_c = sum(p), .groups = "drop")
+```
+
+Now we compute gains for all categories for spoken and written texts separately:
+
+```{r}
+compute_identity_by_modality <- function(probs_data, p_c_data) {
+
+p_c_x <- probs_data %>%
+  # add category information
+  left_join(d %>% distinct(probe_word=target_word, probe_category=category), by = "probe_word") %>%
+  group_by(sent_id, target_word, probe_category) %>%
+  # compute probability of category c given context x
+  summarise(p_c_x = sum(prob_norm)) %>%
+  ungroup() %>%
+  left_join(d %>% distinct(target_word, target_category=category), by = "target_word") %>%
+  # retain categories that correspond to target words
+  filter(target_category == probe_category) %>%
+  select(sent_id, category=target_category, target_word, p_c_x)
+
+d_gain <- p_c_data %>% 
+  left_join(p_c_x, by = "category") %>%
+  left_join(d %>% filter(level=="terminal") %>% distinct(target_word, target=category) , by = "target_word") %>%
+  left_join(p_c_data %>% distinct(target=category, p_t=p_c), by = "target") %>%
+  select(-target_word, -p_c) %>%
+  group_by(target) %>%
+  mutate(m_t=n_distinct(sent_id)) %>%
+  ungroup()
+
+identity <- d_gain %>%
+  # apply gain estimation function
+  mutate(gain = gain_identity(p_c_x, p_t, m_t)) %>%
+  # sum across all targets that belong to category c
+  group_by(domain, level, category) %>%
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+
+identity
+}
+
+identity_spoken  <- compute_identity_by_modality(probs_spoken, p_c_spoken)
+identity_written <- compute_identity_by_modality(probs_written, p_c_written)
+
+id_bs_spoken <- identity_spoken %>% t_greater_than_s()
+id_bs_spoken %>% kable()
+id_bi_spoken <- identity_spoken %>% t_greater_than_i()
+id_bi_spoken %>% kable()
+id_bs_written <- identity_written %>% t_greater_than_s() 
+id_bs_written %>% kable()
+id_bi_written <- identity_written %>% t_greater_than_i()
+id_bi_written %>% kable()
+```
+
+We ran `07_LLM_analysis_features.R` to compute gains based on features for spoken and written texts, separately. Now load the results and summarise:
+
+```{r}
+features_spoken <- read_csv(here("output/results", "llm_analysis_features_spoken.csv"), show_col_types = FALSE)
+features_written <- read_csv(here("output/results", "llm_analysis_features_written.csv"), show_col_types = FALSE)
+
+fe_bs_spoken <- features_spoken %>% t_greater_than_s() 
+fe_bs_spoken %>% kable()
+fe_bi_spoken <- features_spoken %>% t_greater_than_i()
+fe_bi_spoken %>% kable()
+fe_bs_written <- features_written %>% t_greater_than_s() 
+fe_bs_written %>% kable()
+fe_bi_written <- features_written %>% t_greater_than_i()
+fe_bi_written %>% kable()
+```
+
+These tables suggest that starting and intermediate categories are typically favored over their terminal categories for both spoken and written contexts.
+
+Save tables:
+
+```{r}
+write_leuven_context_tables <- function(id_bs, id_bi,
+                                       fe_bs, fe_bi,
+                                       modality = c("spoken", "written"),
+                                       out_dir = here("output", "tables"),
+                                       prefix = "leuven") {
+
+  modality <- match.arg(modality)
+
+  leuven_bs <- id_bs %>%
+    select(-t_greater_than_s, -n_terminals) %>%
+    rename_with(~ paste0(.x, "_id"), -category) %>%
+    left_join(
+      fe_bs %>%
+        select(-t_greater_than_s, -n_terminals) %>%
+        rename_with(~ paste0(.x, "_fe"), -category),
+      by = "category"
+    )
+
+  bs_file <- file.path(out_dir, paste0(prefix, "_t_minus_s_context_", modality, ".tex"))
+  bs_tb <- xtable(leuven_bs, digits = c(0, 0, 2, 2, 2, 2))
+  print(bs_tb, file = bs_file, include.rownames = FALSE, comment = FALSE)
+
+  leuven_bi <- id_bi %>%
+    select(-t_greater_than_i, -n_terminals) %>%
+    rename_with(~ paste0(.x, "_id"), -category) %>%
+    left_join(
+      fe_bi %>%
+        select(-t_greater_than_i, -n_terminals) %>%
+        rename_with(~ paste0(.x, "_fe"), -category),
+      by = "category"
+    ) %>%
+    left_join(d %>% select(category, domain) %>% distinct(), by = "category") %>%
+    arrange(domain) %>%
+    select(-domain)
+
+  bi_file <- file.path(out_dir, paste0(prefix, "_t_minus_i_context_", modality, ".tex"))
+  bi_tb <- xtable(leuven_bi, digits = c(0, 0, 2, 2, 2, 2))
+  print(bi_tb, file = bi_file, include.rownames = FALSE, comment = FALSE)
+
+  invisible(list(
+    bs = list(data = leuven_bs, file = bs_file),
+    bi = list(data = leuven_bi, file = bi_file)
+  ))
+}
+
+write_leuven_context_tables(
+  id_bs = id_bs_spoken,
+  id_bi = id_bi_spoken,
+  fe_bs = fe_bs_spoken,
+  fe_bi = fe_bi_spoken,
+  modality = "spoken"
+)
+
+write_leuven_context_tables(
+  id_bs = id_bs_written,
+  id_bi = id_bi_written,
+  fe_bs = fe_bs_written,
+  fe_bi = fe_bi_written,
+  modality = "written"
+)
+```

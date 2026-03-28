@@ -1,0 +1,458 @@
+---
+title: "Analysis on feature datasets"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r libraries}
+library(tidyverse)
+library(here)
+library(kableExtra)
+library(xtable)
+source("helper_functions.R", local = knitr::knit_global())
+select <- dplyr::select
+```
+
+Set up some helper functions to compute gain for a category:
+
+```{r}
+# safe log
+safelog <- function(p) {
+  ifelse(is.na(p) | p == 0, 0, -log2(p))
+}
+
+# cross-entropy
+xent <- function(p, q) {
+  p * safelog(q) + (1-p) * safelog(1-q)
+}
+
+# KL divergence
+error <- function(s, l) {
+  xent(s, l) - xent(s, s)
+}
+```
+
+Gain functions for identity and feature models:
+
+```{r}
+# compute gain for identity model
+# p_c : probability of category c
+gain_identity <- function(p_c) {
+  gain <- p_c * safelog(p_c)
+}
+
+# compute gain for feature model
+# p_c : probability of category c
+# f_none: probability of feature f without any category label
+# f_c : probability of feature f in category c
+gain_feature <- function(p_c, f_c, f_none) {
+  gain <- p_c * error(f_c, f_none)
+}
+```
+
+## Analysis on Rosch data
+
+Prepare a dataframe:
+
+```{r}
+# load feature and frequency data
+d_rosch <- read_csv(here("data", "d_rosch.csv"), show_col_types = FALSE)
+
+# prepare a data frame to compute gain
+p_c_rosch <- d_rosch %>%
+  group_by(category, level, domain) %>%
+  summarise(p_c = sum(p)) %>%
+  ungroup()
+
+f_none_rosch <- d_rosch %>%
+  filter(concept == category) %>%
+  summarise(across(starts_with("f_"), ~ sum(.x * p) / sum(p))) %>%
+  pivot_longer(cols = everything(), names_to = "feature", values_to = "f_none")
+
+f_c_rosch <- d_rosch %>%
+  group_by(category) %>%
+  summarise(across(starts_with("f_"), ~ sum(.x * p) / sum(p))) %>%
+  ungroup() %>%
+  pivot_longer(cols = -category, names_to = "feature", values_to = "f_c")
+
+rosch_identity <- p_c_rosch
+
+d_gain_rosch <- p_c_rosch %>%
+  left_join(f_c_rosch, by = "category") %>%
+  left_join(f_none_rosch, by = "feature")
+```
+
+Compute gains:
+
+```{r}
+rosch_identity$gain <- mapply(gain_identity, rosch_identity$p_c)
+
+d_gain_rosch$gain <- mapply(gain_feature, d_gain_rosch$p_c, d_gain_rosch$f_c, d_gain_rosch$f_none)
+
+rosch_feature <- d_gain_rosch %>% 
+  group_by(category, level, domain) %>%
+  # sum across all features for a given category
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+```
+
+Summarise results for identity:
+
+```{r}
+rosch_identity %>%
+  arrange(domain, desc(gain)) %>%
+  kable()
+
+rosch_id_bs <- rosch_identity %>%
+  b_greater_than_s()
+rosch_id_bs %>% kable()
+
+rosch_id_bc <- rosch_identity %>%
+  b_greater_than_c()
+rosch_id_bc %>% kable()
+```
+
+Fruit and instrument beats all of its basic terms, while all basic concepts beat furniture. Kitchen table and dining room table beats table, but all other basic level categories beat their subordinate categories. 
+
+Summarise results for features:
+
+```{r}
+rosch_feature %>%
+  arrange(domain, desc(gain)) %>%
+  kable()
+
+rosch_fe_bs <- rosch_feature %>%
+  b_greater_than_s()
+rosch_fe_bs %>% kable()
+
+rosch_fe_bc <- rosch_feature %>%
+  b_greater_than_c() 
+rosch_fe_bc %>% kable()
+```
+
+Fruit and instrument beats all of its basic terms, while table and lamp beats furniture. Table has the highest frequency and lamp has the most unique set of features. All basic concepts beat their subordinates.
+
+Make tables:
+
+```{r}
+rosch_bs <- rosch_id_bs %>%
+  select(-b_greater_than_s, -n_basics) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    rosch_fe_bs %>%
+      select(-b_greater_than_s, -n_basics) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  )
+
+rosch_bc <- rosch_id_bc %>%
+  select(-b_greater_than_c, -n_subordinates) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    rosch_fe_bc %>%
+      select(-b_greater_than_c, -n_subordinates) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  ) %>%
+  left_join(d_rosch %>% select(category, domain) %>% unique(), by = "category") %>%
+  arrange(domain) %>% select(-domain)
+
+rosch_bs_tb <- xtable(rosch_bs, digits = c(0, 0, 2, 2, 2, 2))
+print(rosch_bs_tb, file = here("output", "tables", "rosch_b_minus_s.tex"), include.rownames = FALSE, comment = FALSE)
+
+rosch_bc_tb <- xtable(rosch_bc, digits = c(0, 0, 2, 2, 2, 2))
+print(rosch_bc_tb, file = here("output", "tables", "rosch_b_minus_c.tex"), include.rownames = FALSE, comment = FALSE)
+```
+
+## Analysis on Leuven data
+
+Prepare a dataframe:
+
+```{r}
+# load feature and frequency data
+d_leuven <- read_csv(here("data", "d_leuven.csv"), show_col_types = FALSE)
+
+# prepare a data frame to compute gain
+p_c_leuven <- d_leuven %>%
+  group_by(category, level, domain) %>%
+  summarise(p_c = sum(p)) %>%
+  ungroup()
+
+f_none_leuven <- d_leuven %>%
+  filter(concept == category) %>%
+  summarise(across(starts_with("f_"), ~ sum(.x * p) / sum(p))) %>%
+  pivot_longer(cols = everything(), names_to = "feature", values_to = "f_none")
+
+f_c_leuven <- d_leuven %>%
+  group_by(category) %>%
+  summarise(across(starts_with("f_"), ~ sum(.x * p) / sum(p))) %>%
+  ungroup() %>%
+  pivot_longer(cols = -category, names_to = "feature", values_to = "f_c")
+
+leuven_identity <- p_c_leuven
+
+d_gain_leuven <- p_c_leuven %>%
+  left_join(f_c_leuven, by = "category") %>%
+  left_join(f_none_leuven, by = "feature")
+```
+
+Compute gains:
+
+```{r}
+leuven_identity$gain <- mapply(gain_identity, leuven_identity$p_c)
+
+d_gain_leuven$gain <- mapply(gain_feature, d_gain_leuven$p_c, d_gain_leuven$f_c, d_gain_leuven$f_none)
+
+leuven_feature <- d_gain_leuven %>% 
+  group_by(category, level, domain) %>%
+  # sum across all features for a given category
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+```
+
+Summarise results for identity:
+
+```{r}
+leuven_identity %>%
+  filter(domain == "animals") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+leuven_identity %>%
+  filter(domain == "artifacts") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+leuven_id_bs <- leuven_identity %>%
+  t_greater_than_s() 
+leuven_id_bs %>% kable()
+
+leuven_id_bi <- leuven_identity %>%
+  t_greater_than_i() 
+leuven_id_bi %>% kable()
+```
+
+Animals beat all their terminal level concepts and each five intermediate level concepts beat all their terminal level concepts. Artifacts beat all their terminal level categories except for car. Car has the highest frequency. All intermediate level categories also defeat their terminals in the artifact domain.
+
+Summarise results for features:
+
+```{r}
+leuven_feature %>%
+  filter(domain == "animals") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+leuven_feature %>%
+  filter(domain == "artifacts") %>%
+  arrange(desc(gain)) %>%
+  head(10) %>% kable()
+
+leuven_fe_bs <- leuven_feature %>%
+  t_greater_than_s() 
+leuven_fe_bs %>% kable()
+
+leuven_fe_bi <- leuven_feature %>%
+  t_greater_than_i()
+leuven_fe_bi %>% kable()
+```
+
+Animals beat all their terminal level concepts and each five intermediate level concepts beat all their terminal level concepts. Artifacts beat all their terminal level categories except for car. Car has the highest frequency. All intermediate level categories also defeat their terminals in the artifact domain.
+
+Make tables:
+
+```{r}
+leuven_bs <- leuven_id_bs %>%
+  select(-t_greater_than_s, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    leuven_fe_bs %>%
+      select(-t_greater_than_s, -n_terminals) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  )
+
+leuven_bi <- leuven_id_bi %>%
+  select(-t_greater_than_i, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(
+    leuven_fe_bi %>%
+      select(-t_greater_than_i, -n_terminals) %>%
+      rename_with(~ paste0(.x, "_fe"), -category),
+    by = "category"
+  )  %>%
+  left_join(d_leuven %>% select(category, domain) %>% unique(), by = "category") %>%
+  arrange(domain) %>% select(-domain)
+
+leuven_bs_tb <- xtable(leuven_bs, digits = c(0, 0, 2, 2, 2, 2))
+print(leuven_bs_tb, file = here("output", "tables", "leuven_t_minus_s.tex"), include.rownames = FALSE, comment = FALSE)
+
+leuven_bi_tb <- xtable(leuven_bi, digits = c(0, 0, 2, 2, 2, 2))
+print(leuven_bi_tb, file = here("output", "tables", "leuven_t_minus_i.tex"), include.rownames = FALSE, comment = FALSE)
+```
+
+## Replication of Corter and Gluck analysis
+
+Now we use Corter and Gluck's category utility measure on the Rosch and Leuven datasets to replicate their analysis. First set up a category utility function based on their formulation:
+
+```{r}
+category_utility <- function(p_c, f_c, f_none) {
+  cu <- p_c * (f_c ^ 2 - f_none ^ 2)
+}
+```
+
+First let's check if this category utility measure produces the same result as for Table 2 in Corter and Gluck (1992):
+
+```{r}
+rosch_id <- read_csv(here("data", "rosch_feat_id.csv"), show_col_types = FALSE)
+
+all_domains <- unique(rosch_id$superordinate)
+
+rosch_cu_small <- map_dfr(all_domains, function(my_domain) {
+
+  feat_cols <- rosch_id %>% 
+    filter(superordinate == my_domain) %>% 
+    pull(feature_id)
+
+  d_rosch_small <- d_rosch %>%
+    select(concept, category, level, domain, any_of(feat_cols)) %>%
+    filter(domain == my_domain)
+
+  f_none_rosch <- d_rosch_small %>%
+    filter(concept == category) %>%
+    summarise(across(starts_with("f_"), ~ mean(.x, na.rm = TRUE))) %>%
+    pivot_longer(
+      cols = everything(),
+      names_to = "feature",
+      values_to = "f_none"
+    )
+
+  f_c_rosch <- d_rosch_small %>%
+    group_by(category) %>%
+    summarise(across(starts_with("f_"), ~ mean(.x, na.rm = TRUE)), .groups = "drop") %>%
+    pivot_longer(
+      cols = -category,
+      names_to = "feature",
+      values_to = "f_c"
+    )
+
+  p_c_rosch_small <- d_rosch_small %>%
+    mutate(p = 1 / 6) %>%
+    group_by(category, level, domain) %>%
+    summarise(p_c = sum(p), .groups = "drop")
+
+  d_gain_rosch_small <- p_c_rosch_small %>%
+    left_join(f_c_rosch, by = "category") %>%
+    left_join(f_none_rosch, by = "feature") %>%
+    mutate(
+      cu = mapply(category_utility, p_c, f_c, f_none)
+    )
+
+  d_gain_rosch_small %>% 
+    group_by(category, level, domain) %>%
+    summarise(cu = sum(cu), .groups = "drop") %>%
+    group_by(level) %>%
+    summarise(cu = mean(cu), .groups = "drop") %>%
+    mutate(cu = round(cu, 2)) %>%
+    pivot_wider(names_from = level, values_from = cu) %>%
+    mutate(domain = my_domain) %>%
+    select(domain, subordinate, basic, superordinate)
+})
+
+rosch_cu_small %>% kable()
+```
+
+The results are the same for instrument and furniture domains, but slightly different for fruit domain. This happens because their matrix treated the feature "grows on trees" for apples and peaches differently, but we treated them as the same feature.
+
+Now apply the category utility measure on the Rosch data with expanded matrix that includes all three superordinates:
+
+```{r}
+
+d_gain_rosch$cu <- mapply(category_utility, d_gain_rosch$p_c, d_gain_rosch$f_c, d_gain_rosch$f_none)
+
+rosch_cu <- d_gain_rosch %>% 
+  group_by(category, level, domain) %>%
+  # sum across all features for a given category
+  summarise(cu = sum(cu)) %>%
+  ungroup()
+rosch_cu %>%
+  arrange(domain, desc(cu)) %>%
+  kable()
+
+rosch_cu_bs <- rosch_cu %>%
+  b_greater_than_s_cu()
+rosch_cu_bs %>% kable()
+
+rosch_cu_bc <- rosch_cu %>%
+  b_greater_than_c_cu() 
+rosch_cu_bc %>% kable()
+
+# save tables
+rosch_bs <- rosch_cu_bs %>%
+  select(-b_greater_than_s, -n_basics) %>%
+  rename_with(~ paste0(.x, "_id"), -category)
+
+rosch_bc <- rosch_cu_bc %>%
+  select(-b_greater_than_c, -n_subordinates) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(d_rosch %>% select(category, domain) %>% unique(), by = "category") %>%
+  arrange(domain) %>% select(-domain)
+
+rosch_bs_tb <- xtable(rosch_bs, digits = c(0, 0, 2, 2))
+print(rosch_bs_tb, file = here("output", "tables", "rosch_b_minus_s_cu.tex"), include.rownames = FALSE, comment = FALSE)
+
+rosch_bc_tb <- xtable(rosch_bc, digits = c(0, 0, 2, 2))
+print(rosch_bc_tb, file = here("output", "tables", "rosch_b_minus_c_cu.tex"), include.rownames = FALSE, comment = FALSE)
+```
+
+Apply this on the Leuven data:
+
+```{r}
+
+d_gain_leuven$cu <- mapply(category_utility, d_gain_leuven$p_c, d_gain_leuven$f_c, d_gain_leuven$f_none)
+
+leuven_cu <- d_gain_leuven %>% 
+  group_by(category, level, domain) %>%
+  # sum across all features for a given category
+  summarise(cu = sum(cu)) %>%
+  ungroup()
+
+leuven_cu %>%
+  filter(domain == "animals") %>%
+  arrange(desc(cu)) %>%
+  head(10) %>% kable()
+
+leuven_cu %>%
+  filter(domain == "artifacts") %>%
+  arrange(desc(cu)) %>%
+  head(10) %>% kable()
+
+leuven_cu_bs <- leuven_cu %>%
+  t_greater_than_s_cu() 
+leuven_cu_bs %>% kable()
+
+leuven_cu_bi <- leuven_cu %>%
+  t_greater_than_i_cu() 
+leuven_cu_bi %>% kable()
+
+# save tables
+leuven_bs <- leuven_cu_bs %>%
+  select(-t_greater_than_s, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category)
+
+leuven_bi <- leuven_cu_bi %>%
+  select(-t_greater_than_i, -n_terminals) %>%
+  rename_with(~ paste0(.x, "_id"), -category) %>%
+  left_join(d_leuven %>% select(category, domain) %>% unique(), by = "category") %>%
+  arrange(domain) %>% select(-domain)
+
+leuven_bs_tb <- xtable(leuven_bs, digits = c(0, 0, 2, 2))
+print(leuven_bs_tb, file = here("output", "tables", "leuven_t_minus_s_cu.tex"), include.rownames = FALSE, comment = FALSE)
+
+leuven_bi_tb <- xtable(leuven_bi, digits = c(0, 0, 2, 2))
+print(leuven_bi_tb, file = here("output", "tables", "leuven_t_minus_i_cu.tex"), include.rownames = FALSE, comment = FALSE)
+```
+
+In the Rosch dataset, the basic-level categories apple, table, and piano exhibit higher utility than their corresponding superordinate categories. In the Leuven dataset, only the terminal-level category car shows higher utility than its starting category, artifact. Overall, these results suggest that superordinates are typically favored over basic-level categories.

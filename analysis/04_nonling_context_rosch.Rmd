@@ -1,0 +1,446 @@
+---
+title: "Non-linguistic context analysis"
+output: html_document
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message=FALSE, warning=FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+library(grid)
+library(gridExtra)
+library(patchwork)
+source("helper_functions.R", local = knitr::knit_global())
+select <- dplyr::select
+```
+
+This notebook makes a plot to help understand which of our non-linguistic context assumptions provide more support for basic-level categories rather than superordinate and intermediate categories.
+
+First set up some basic helper functions to compute gain:
+
+```{r}
+# safe log
+safelog <- function(p) {
+  ifelse(is.na(p) | p == 0, 0, -log2(p))
+}
+
+# cross-entropy
+xent <- function(p, q) {
+  p * safelog(q) + (1-p) * safelog(1-q)
+}
+
+# KL divergence
+error <- function(s, l) {
+  xent(s, l) - xent(s, s)
+}
+```
+
+## Analysis on Rosch data
+
+Let $B$ denoted a basic-level category (e.g. guitar) and let $S$ denoted a superordinate category (e.g. musical instrument).
+
+We'll assume that there are only two subordinate items in a given non-linguistic context $x$ for the speaker to make a distinction. The proportion of contexts where two subordinate items belong to the same $B$ (e.g. folk guitar vs. classic guitar) will be called $p_b$, the proportion of contexts where two subordinate items belong to the same $S$ but different $B$ (e.g. folk guitar vs. grand piano) will be called $p_s$, and the proportion of contexts where two subordinate items belong to different $S$ categories will be called $p_u$. We'll set up that $p_b + p_s + p_u = 1$. The goal is to see which $p_b$, $p_s$ and $p_u$ values lead to greater communicative gain for $B$ than both $S$ and $C$, and vice versa.
+
+We're going to use corpus frequencies for prior need probabilities for subordinate concepts in Rosch data. We'll consider all possible unique pairs from Rosch concepts. For a given pair of two subordinate items $c_i$ and $c_j$, we'll assume that base context probability for context $x_{ij}$ that contains these two items will equal to $p_0(x_{ij}) \propto  p(c_i) * p(c_j)$. Then we will apply our assumptions about $p_b$, $p_s$ and $p_u$ to get final probability for a given context $x_{ij}$ (refer to the Appendix in the manuscript). For a given context $x_{ij}$, the context-dependent probability for the target category $t$ will be $p(t|x_{ij})=p(t) / (p(c_i) + p(c_j) )$ where $t \in {c_i, c_j}$. 
+
+Now score a range of parameter values for $p_b$, $p_s$ and $p_u$ and prepare a dataframe to compute gain:
+
+```{r}
+# score a range of parameter values
+p_range <- seq(0, 1, by = 0.02) 
+
+d_prob <- expand.grid(p_b = p_range, p_s = p_range) %>%
+  mutate(p_u = 1 - p_b - p_s) %>%
+  filter(p_u >= 0)
+
+# load Rosch data
+d <- read_csv(here("data", "d_rosch.csv"), show_col_types=FALSE)
+
+# create unique combinations of two pairs:
+unique_targets <- unique(d$concept)
+all_x <- t(combn(unique_targets, 2)) %>%
+  as.data.frame() %>%
+  rename(c1 = V1, c2 = V2)
+
+pairs <- all_x %>%
+  # add prior need:
+  left_join(d %>% distinct(c1=concept, p1=p, s1=domain), by = "c1") %>%
+  left_join(d %>% distinct(c2=concept, p2=p, s2=domain), by = "c2") %>%
+  left_join(d %>% filter(concept!=category, !(category %in% c("instrument", "fruit", "furniture"))) %>%
+              distinct(c1=concept, b1=category), by = "c1") %>%
+  left_join(d %>% filter(concept!=category, !(category %in% c("instrument", "fruit", "furniture"))) %>%
+              distinct(c2=concept, b2=category), by = "c2") %>%
+  # estimate normalized p(c1) * p(c2)
+  mutate(p1_p2 = p1 * p2,
+         p1_p2 = p1_p2 / sum(p1_p2)) %>%
+  mutate(s_same = ifelse(s1 == s2 & b1 != b2, 1, 0),
+         b_same = ifelse(s1 == s2 & b1 == b2, 1, 0),
+         s_diff = ifelse(s1 != s2 & b1 != b2, 1, 0)) %>%
+  # estimate normalized p(c1) * p(c2) given the same superordinate or basic
+  mutate(p_b_same = p1_p2 * b_same,
+         p_b_same = p_b_same / sum(p_b_same),
+         p_s_same = p1_p2 * s_same,
+         p_s_same = p_s_same / sum(p_s_same),
+         p_s_diff = p1_p2 * s_diff,
+         p_s_diff = p_s_diff / sum(p_s_diff)) %>%
+  # add range of probabilities
+  cross_join(d_prob) %>%
+  # estimate final probability of context x given the ratio
+  mutate(p_x = p_b_same * p_b+ p_s_same * p_s + p_s_diff * p_u) %>%
+  # estimate context dependent probability
+  mutate(p1_x = p1 / (p1 + p2),
+         p2_x = p2 / (p1 + p2)) %>%
+  select(p_b, p_s, p_u, s1, s2, b1, b2, c1, c2, p_x, p1_x, p2_x)
+```
+
+Now compute gains for all categories:
+
+```{r}
+gains <- d %>%
+  distinct(category, level, domain) %>%
+  cross_join(pairs) %>%
+  mutate(
+    error_without_label = p1_x * safelog(p1_x) + p2_x * safelog(p2_x),
+    e1 = case_when(
+    level == "subordinate"   ~ ifelse(c1 != c2 & c1 == category, 0, safelog(p1_x)),
+    level == "basic"         ~ ifelse(b1 != b2 & b1 == category, 0, safelog(p1_x)),
+    level == "superordinate" ~ ifelse(s1 != s2 & s1 == category, 0, safelog(p1_x))),
+    e2 = case_when(
+    level == "subordinate"   ~ ifelse(c1 != c2 & c2 == category, 0, safelog(p2_x)),
+    level == "basic"         ~ ifelse(b1 != b2 & b2 == category, 0, safelog(p2_x)),
+    level == "superordinate" ~ ifelse(s1 != s2 & s2 == category, 0, safelog(p2_x))),
+    error_with_label = p1_x * e1 + p2_x * e2,
+    gain = p_x * (error_without_label - error_with_label)
+  ) %>%
+  group_by(category, level, domain, p_b, p_s, p_u) %>%
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+
+b_minus_s <- gains %>%
+  filter(level == "basic") %>% rename(gain_b=gain) %>%
+  left_join(gains %>% 
+              distinct(domain=category, gain_s=gain, p_s, p_u, p_b), 
+            by=c("domain", "p_s", "p_u", "p_b")) %>%
+  mutate(b_minus_s = gain_b - gain_s)
+
+b_minus_c <- gains %>%
+  filter(level == "subordinate") %>% rename(gain_c=gain) %>%
+  left_join(d %>% filter(level == "basic") %>% select(category=concept, basic=category), by = "category")  %>%
+  left_join(gains %>% 
+              distinct(basic=category, gain_b=gain, p_s, p_u, p_b), 
+            by=c("basic", "p_s", "p_u", "p_b")) %>%
+  mutate(b_minus_c = gain_b - gain_c)
+  
+```
+
+Now compute gains using features:
+
+```{r}
+# take features
+features <- d %>%
+  select(concept, starts_with("f_")) %>%
+  distinct() %>%
+  pivot_longer(cols=-concept, names_to = "feature_id", values_to = "value")
+
+# add feature values and compute errors
+pairs_f <- pairs %>%
+  left_join(features %>% rename(c1=concept, f1=value), by = "c1", relationship = "many-to-many") %>%
+  left_join(features %>% rename(c2=concept, f2=value), by = c("c2", "feature_id"), relationship = "many-to-many") %>%
+  mutate(fnone = p1_x * f1 + p2_x * f2,
+         e1_x = error(f1, fnone),
+         e2_x = error(f2, fnone)) %>%
+  group_by(p_b, p_s, p_u, s1, s2, b1, b2, c1, c2, p_x, p1_x, p2_x) %>%
+  # sum across features
+  summarise(e1_x = sum(e1_x),
+            e2_x = sum(e2_x)) %>%
+  ungroup()
+
+gainsf <- d %>%
+  distinct(category, level, domain) %>%
+  cross_join(pairs_f) %>%
+  mutate(
+    error_without_label = p1_x * e1_x + p2_x * e2_x,
+    e1 = case_when(
+    level == "subordinate"   ~ ifelse(c1 != c2 & c1 == category, 0, e1_x),
+    level == "basic"         ~ ifelse(b1 != b2 & b1 == category, 0, e1_x),
+    level == "superordinate" ~ ifelse(s1 != s2 & s1 == category, 0, e1_x)),
+    e2 = case_when(
+    level == "subordinate"   ~ ifelse(c1 != c2 & c2 == category, 0, e2_x),
+    level == "basic"         ~ ifelse(b1 != b2 & b2 == category, 0, e2_x),
+    level == "superordinate" ~ ifelse(s1 != s2 & s2 == category, 0, e2_x)),
+    error_with_label = p1_x * e1 + p2_x * e2,
+    gain = p_x * (error_without_label - error_with_label)
+  ) %>%
+  group_by(category, level, domain, p_b, p_s, p_u) %>%
+  summarise(gain = sum(gain)) %>%
+  ungroup()
+
+b_minus_sf <- gainsf %>%
+  filter(level == "basic") %>% rename(gain_b=gain) %>%
+  left_join(gainsf %>% 
+              distinct(domain=category, gain_s=gain, p_s, p_u, p_b), 
+            by=c("domain", "p_s", "p_u", "p_b")) %>%
+  mutate(b_minus_s = gain_b - gain_s)
+
+b_minus_cf <- gainsf %>%
+  filter(level == "subordinate") %>% rename(gain_c=gain) %>%
+  left_join(d %>% filter(level == "basic") %>% select(category=concept, basic=category), by = "category")  %>%
+  left_join(gainsf %>% 
+              distinct(basic=category, gain_b=gain, p_s, p_u, p_b), 
+            by=c("basic", "p_s", "p_u", "p_b")) %>%
+  mutate(b_minus_c = gain_b - gain_c)
+```
+
+Save a plot:
+
+```{r, fig.height=3}
+
+b_minus_s_sum <- b_minus_s %>%
+  group_by(p_s, p_u, p_b) %>%
+    summarise(b_minus_s = mean(b_minus_s), .groups="drop") %>%
+    mutate(pref = case_when(
+      b_minus_s <  0 ~ "superordinate",
+      b_minus_s >  0 ~ "basic",
+      TRUE           ~ "equal"
+    )) %>%
+  mutate(category = "average")
+
+b_minus_s_all <- b_minus_s %>%
+  bind_rows(b_minus_s_sum) %>%
+  mutate(category = factor(category, levels = c("average", "apple", "chair", "drum", "grape", "guitar", "lamp", "peach", "piano", "table")))
+
+b_minus_sf_sum <- b_minus_sf %>%
+  group_by(p_s, p_u, p_b) %>%
+    summarise(b_minus_s = mean(b_minus_s), .groups="drop") %>%
+    mutate(pref = case_when(
+      b_minus_s <  0 ~ "superordinate",
+      b_minus_s >  0 ~ "basic",
+      TRUE           ~ "equal"
+    )) %>%
+  mutate(category = "average")
+
+b_minus_sf_all <- b_minus_sf %>%
+  bind_rows(b_minus_sf_sum) %>%
+  mutate(category = factor(category, levels = c("average", "apple", "chair", "drum", "grape", "guitar", "lamp", "peach", "piano", "table")))
+
+p1 <- plot_binary_b_minus_s_nonling(b_minus_s_all, ncol=5) + theme(legend.box.spacing = unit(0.1, "pt"))
+p2 <- plot_binary_b_minus_s_nonling(b_minus_sf_all, ncol=5)  + theme(axis.title.y = element_blank(), axis.text.y = element_blank(), axis.ticks.y = element_blank(), legend.box.spacing = unit(0.1, "pt"))
+
+title_left  <- wrap_elements(full = textGrob("Identity-based", x = 0.5, hjust = 0.5,
+                                             gp = gpar(fontsize = 10, fontface = "bold")))
+title_right <- wrap_elements(full = textGrob("Feature-based",  x = 0.5, hjust = 0.5,
+                                             gp = gpar(fontsize = 10, fontface = "bold")))
+
+title_row <- title_left + title_right
+
+top_block <- (p1 + p2) +
+  plot_layout(ncol = 2)
+
+plot_sum <- title_row / top_block +
+  plot_layout(heights = c(0.1, 1)) &
+  theme(
+    plot.margin = margin(5, 2, 2, 2, "pt")
+  )
+plot_sum
+
+ggsave(here("output/figures", "nonling_rosch_combined.pdf"), 
+       plot_sum, width = 17.5, height = 7, units = "cm")
+```
+
+Red cells indicate a preference for the basic-level category, whereas blue cells indicate a preference for the superordinate category. A basic-level advantage emerges when the need to distinguish two items from different basic-level categories within the same superordinate category ($p_s$) increases and the need to distinguish two items from different superordinate categories ($p_{u}$) decreases, under both models. The proportion of red cells is higher for categories with higher need probabilities (e.g. table and lamp) than for those with lower need probabilities (e.g. apple and drum). Basic-level categories outperform superordinate categories for low-frequency items  only when the need to distinguish two items from different superordinate categories is very low ($p_{u}$ close to zero). 
+
+## Analysis on Leuven data
+
+Let $S$ denote a starting category  (e.g. animal), $I$ an intermediate category  (e.g. mammal), and $T$ a terminal level category (e.g. elephant).
+
+Again, we'll assume that there are only two terminal items in a given non-linguistic context $x$ for the speaker to make a distinction. The proportion of contexts where two items belong to the same $I$ (e.g. lark vs. crow) will be called $p_i$, the proportion of contexts where two items belong to the same $S$ but different $I$ (e.g. lark vs. snake) will be called $p_s$, and the proportion of contexts where two items belong to different $S$ categories (e.g. lark vs. axe) will be called $p_u$. We'll set up that $p_i + p_s + p_u = 1$. The goal is to see which $p_i$, $p_s$ and $p_u$ values lead to greater communicative gain for $T$ than both $S$ and $I$, and vice versa.
+
+We're going to use corpus frequencies for prior need probabilities for terminal concepts in Leuven data. We'll consider all possible unique pairs from Leuven concepts. For a given pair of two items $t_i$ and $t_j$, we'll assume that prior context probability for context $x_{ij}$ that contains these two items will equal to $p(x_{ij}) \propto  p(t_i) * p(t_j)$. Then we will apply our assumptions about $p_i$, $p_s$ and $p_u$ to get final probability for a given context $x_{ij}$ (refer to the Appendix in the manuscript). For a given context $x_{ij}$, the context-dependent probability for the target category $t$ will be $p(t|x_{ij})=p(t) / (p(t_i) + p(t_j) )$ where $t \in {t_i, t_j}$. 
+
+We scored a range of parameter values for $p_i$, $p_s$ and $p_u$ and computed gain using `03_nonling_context_leuven.R`. Now we'll load and visualize the results:
+
+```{r, fig.height=10, fig.width= 20}
+d <- read_csv(here("data", "d_leuven.csv"), show_col_types = FALSE)
+
+gains <- read_csv(here("output", "results", "nonling_context_leuven_identity.csv"), show_col_types = FALSE)
+
+t_minus_s <- gains %>%
+  filter(level == "terminal") %>% rename(gain_t=gain) %>%
+  left_join(gains %>%
+              distinct(domain=category, gain_s=gain, p_i, p_u, p_s),
+            by=c("domain", "p_i", "p_u", "p_s")) %>%
+  mutate(t_minus_s = gain_t - gain_s)
+
+t_minus_i <- gains %>%
+  filter(level == "terminal") %>% rename(gain_t=gain) %>%
+  left_join(d %>% filter(level == "intermediate") %>% 
+              select(category=concept, intermediate=category), by = "category", relationship = "many-to-many")  %>%
+  left_join(gains %>%
+              distinct(intermediate=category, gain_i=gain, p_i, p_u, p_s),
+            by=c("intermediate", "p_i", "p_u", "p_s")) %>%
+  mutate(t_minus_i = gain_t - gain_i)
+```
+
+Now feature based results:
+
+```{r, fig.height=10, fig.width= 20}
+gains_f <- read_csv(here("output", "results", "nonling_context_leuven_features.csv"), show_col_types = FALSE)
+
+t_minus_s_f <- gains_f %>%
+  filter(level == "terminal") %>% rename(gain_t=gain) %>%
+  left_join(gains_f %>%
+              distinct(domain=category, gain_s=gain, p_i, p_u, p_s),
+            by=c("domain", "p_i", "p_u", "p_s")) %>%
+  mutate(t_minus_s = gain_t - gain_s)
+
+t_minus_i_f <- gains_f %>%
+  filter(level == "terminal") %>% rename(gain_t=gain) %>%
+  left_join(d %>% filter(level == "intermediate") %>% 
+              select(category=concept, intermediate=category), by = "category", relationship = "many-to-many")  %>%
+  left_join(gains_f %>%
+              distinct(intermediate=category, gain_i=gain, p_i, p_u, p_s),
+            by=c("intermediate", "p_i", "p_u", "p_s")) %>%
+  mutate(t_minus_i = gain_t - gain_i)
+```
+
+Save a summary plot across concepts:
+
+```{r}
+p1 <- plot_binary_t_minus_s_summary_nonling(t_minus_s)   + theme( axis.title.x = element_blank())
+p2 <- plot_binary_t_minus_s_summary_nonling(t_minus_s_f) + theme( axis.title.y = element_blank(), axis.title.x = element_blank())
+p3 <- plot_binary_t_minus_i_summary_nonling(t_minus_i) 
+p4 <- plot_binary_t_minus_i_summary_nonling(t_minus_i_f) + theme( axis.title.y = element_blank())
+
+title_left  <- wrap_elements(full = textGrob("Identity-based", x = 0.58, hjust = 0.5, 
+                                             gp = gpar(fontsize = 10, fontface = "bold")))
+title_right <- wrap_elements(full = textGrob("Feature-based",  x = 0.5, hjust = 0.5, 
+                                             gp = gpar(fontsize = 10, fontface = "bold")))
+
+title_row <- title_left + title_right
+
+top_block <- (p1 + p2) +
+  plot_layout(ncol = 2, guides = "collect")
+
+top_block <- top_block & theme(legend.position = "top", legend.box.spacing = unit(0.1, "pt"))
+
+bottom_block <- (p3 + p4) +
+  plot_layout(ncol = 2, guides = "collect")
+
+bottom_block <- bottom_block & theme(legend.position = "top", legend.box.spacing = unit(0.1, "pt"))
+
+plot_sum <- title_row / top_block / bottom_block+
+  plot_layout(heights = c(0.1, 1, 1)) &
+  theme(
+    plot.margin = margin(5, 0, 0, 0, "pt")
+  )
+plot_sum 
+
+ggsave(here("output/figures", "nonling_leuven_summary.pdf"), plot_sum, width = 8.7, height = 10, units = "cm")
+```
+
+Now we make a plot that has selected concepts:
+
+```{r}
+select_concepts <- function(d) {
+  
+d_summary <- d %>%
+  mutate(pref = case_when(
+    t_minus_s >  0 ~ "terminal",
+    t_minus_s <  0 ~ "starting",
+    TRUE           ~ "equal"
+  )) %>%
+  group_by(category) %>%
+  summarise(
+    prop_terminal        = mean(pref == "terminal"),
+    prop_starting = mean(pref == "starting"),
+    prop_equal        = mean(pref == "equal"),
+    .groups = "drop"
+  )
+
+top_terminal <- d_summary %>%
+  arrange(desc(prop_terminal)) %>%
+  slice_head(n = 21) %>%
+  pull(category)
+
+d_summary_reordered <- d_summary %>%
+  filter(category %in% top_terminal) %>%
+  arrange(desc(prop_terminal)) %>%
+  mutate(category = factor(category, levels = category))
+
+d %>%
+  filter(category %in% top_terminal) %>%
+  mutate(category = factor(category, levels = d_summary_reordered$category))
+  
+}
+
+d_subset_identity <- select_concepts(t_minus_s)
+d_subset_features <- select_concepts(t_minus_s_f)
+
+select_concepts <- function(d) {
+  
+d_summary <- d %>%
+  mutate(pref = case_when(
+    t_minus_i >  0 ~ "terminal",
+    t_minus_i <  0 ~ "intermediate",
+    TRUE           ~ "equal"
+  )) %>%
+  group_by(category) %>%
+  summarise(
+    prop_terminal        = mean(pref == "terminal"),
+    prop_inter = mean(pref == "intermediate"),
+    prop_equal        = mean(pref == "equal"),
+    .groups = "drop"
+  )
+
+top_terminal <- d_summary %>%
+  arrange(desc(prop_terminal)) %>%
+  slice_head(n = 21) %>%
+  pull(category)
+
+d_summary_reordered <- d_summary %>%
+  filter(category %in% top_terminal) %>%
+  arrange(desc(prop_terminal)) %>%
+  mutate(category = factor(category, levels = category))
+
+d %>%
+  filter(category %in% top_terminal) %>%
+  mutate(category = factor(category, levels = d_summary_reordered$category))
+  
+}
+
+d_subset_identity2 <- select_concepts(t_minus_i)
+d_subset_features2 <- select_concepts(t_minus_i_f)
+
+p5 <- plot_binary_t_minus_s_nonling(d_subset_identity, ncol=7) + theme(axis.title.x = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.box.spacing = unit(0.1, "pt"), strip.text   = element_text(size = 6))
+p6 <- plot_binary_t_minus_s_nonling(d_subset_features, ncol=7) + theme(axis.title.x = element_blank(), axis.title.y = element_blank(), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.box.spacing = unit(0.1, "pt"), strip.text   = element_text(size = 6))
+p7 <- plot_binary_t_minus_i_nonling(d_subset_identity2, ncol=7) + theme(legend.box.spacing = unit(0.1, "pt"), strip.text   = element_text(size = 6))
+p8 <- plot_binary_t_minus_i_nonling(d_subset_features2, ncol=7) + theme(axis.title.y = element_blank(), legend.box.spacing = unit(0.1, "pt"), strip.text   = element_text(size = 6))
+
+top_block <- (p5 + p6) +
+  plot_layout(ncol = 2)
+
+bottom_block <- (p7 + p8) +
+  plot_layout(ncol = 2)
+
+plot_sum <- title_row / top_block / bottom_block +
+  plot_layout(heights = c(0.1, 1, 1)) & 
+  theme(
+    plot.margin = margin(0.6, 0.5, 0.5, 0.5) # top, right, bottom, left
+  )
+
+ggsave(here("output/figures", "nonling_leuven_concepts.pdf"), plot_sum, width = 17.5, height = 14, units = "cm")
+
+p5 <- plot_binary_t_minus_s_nonling(d_subset_identity, ncol=7)
+p5
+p6 <- plot_binary_t_minus_s_nonling(d_subset_features, ncol=7)
+p6
+p7 <- plot_binary_t_minus_i_nonling(d_subset_identity2, ncol=7)
+p7
+p8 <- plot_binary_t_minus_i_nonling(d_subset_features2, ncol=7)
+p8
+```
+
+The plots indicate that terminal-level categories outperform intermediate categories only under extreme conditions: when nearly all contexts require discrimination between two items belonging to the same intermediate category ($p_{i}$) and almost none require discrimination between two items belonging to different intermediate categories within the same starting category ($p_{s}$). The starting category underperforms the terminal-level only when the need to distinguish two items belonging to different starting categories ($p_{u}$) is zero. For selected Leuven concepts, with the highest proportions of terminal-level preference, the plots suggest that these constraints are somewhat relaxed for high-frequency categories such as car and knife. Nevertheless, the overall pattern continues to favor starting and intermediate categories over terminal-level categories across a wide range of parameter settings (blue cells outnumber red cells). 

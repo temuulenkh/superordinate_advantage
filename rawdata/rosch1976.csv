@@ -1,0 +1,161 @@
+subordinate,basic,superordinate,feature
+classic guitar,guitar,instrument,makes sound
+classic guitar,guitar,instrument,strings
+classic guitar,guitar,instrument,tuning keys
+classic guitar,guitar,instrument,neck
+classic guitar,guitar,instrument,hole
+classic guitar,guitar,instrument,wood
+classic guitar,guitar,instrument,makes music
+classic guitar,guitar,instrument,you strum it
+classic guitar,guitar,instrument,used by music groups
+folk guitar,guitar,instrument,makes sound
+folk guitar,guitar,instrument,strings
+folk guitar,guitar,instrument,tuning keys
+folk guitar,guitar,instrument,neck
+folk guitar,guitar,instrument,hole
+folk guitar,guitar,instrument,wood
+folk guitar,guitar,instrument,makes music
+folk guitar,guitar,instrument,you strum it
+folk guitar,guitar,instrument,used by music groups
+upright piano,piano,instrument,makes sound
+upright piano,piano,instrument,keys
+upright piano,piano,instrument,foot pedals
+upright piano,piano,instrument,strings
+upright piano,piano,instrument,legs
+upright piano,piano,instrument,lid
+upright piano,piano,instrument,wood
+upright piano,piano,instrument,black keys
+upright piano,piano,instrument,white keys
+upright piano,piano,instrument,makes music
+grand piano,piano,instrument,makes sound
+grand piano,piano,instrument,keys
+grand piano,piano,instrument,foot pedals
+grand piano,piano,instrument,strings
+grand piano,piano,instrument,legs
+grand piano,piano,instrument,lid
+grand piano,piano,instrument,wood
+grand piano,piano,instrument,black keys
+grand piano,piano,instrument,white keys
+grand piano,piano,instrument,makes music
+grand piano,piano,instrument,large
+grand piano,piano,instrument,used in concert halls
+kettle drum,drum,instrument,makes sound
+kettle drum,drum,instrument,sticks
+kettle drum,drum,instrument,skins
+kettle drum,drum,instrument,round
+kettle drum,drum,instrument,loud
+kettle drum,drum,instrument,used by music groups
+bass drum,drum,instrument,makes sound
+bass drum,drum,instrument,sticks
+bass drum,drum,instrument,skins
+bass drum,drum,instrument,round
+bass drum,drum,instrument,loud
+bass drum,drum,instrument,used by music groups
+delicious apple,apple,fruit,seeds
+delicious apple,apple,fruit,sweet
+delicious apple,apple,fruit,you eat it
+delicious apple,apple,fruit,stem
+delicious apple,apple,fruit,core
+delicious apple,apple,fruit,skin
+delicious apple,apple,fruit,juicy
+delicious apple,apple,fruit,round
+delicious apple,apple,fruit,grows on trees
+delicious apple,apple,fruit,red
+delicious apple,apple,fruit,crisp
+delicious apple,apple,fruit,shiny
+delicious apple,apple,fruit,tasty
+macintosh apple,apple,fruit,seeds
+macintosh apple,apple,fruit,sweet
+macintosh apple,apple,fruit,you eat it
+macintosh apple,apple,fruit,stem
+macintosh apple,apple,fruit,core
+macintosh apple,apple,fruit,skin
+macintosh apple,apple,fruit,juicy
+macintosh apple,apple,fruit,round
+macintosh apple,apple,fruit,grows on trees
+freestone peach,peach,fruit,seeds
+freestone peach,peach,fruit,sweet
+freestone peach,peach,fruit,you eat it
+freestone peach,peach,fruit,pit
+freestone peach,peach,fruit,skin
+freestone peach,peach,fruit,yellow-orange
+freestone peach,peach,fruit,fuzzy
+freestone peach,peach,fruit,soft
+freestone peach,peach,fruit,grows on trees
+cling peach,peach,fruit,seeds
+cling peach,peach,fruit,sweet
+cling peach,peach,fruit,you eat it
+cling peach,peach,fruit,pit
+cling peach,peach,fruit,skin
+cling peach,peach,fruit,yellow-orange
+cling peach,peach,fruit,fuzzy
+cling peach,peach,fruit,soft
+cling peach,peach,fruit,grows on trees
+cling peach,peach,fruit,juicy
+cling peach,peach,fruit,canned
+concord grape,grape,fruit,seeds
+concord grape,grape,fruit,sweet
+concord grape,grape,fruit,you eat it
+concord grape,grape,fruit,juicy
+concord grape,grape,fruit,bunches
+concord grape,grape,fruit,makes wine
+concord grape,grape,fruit,grows on vine
+concord grape,grape,fruit,purple
+green seedless grape,grape,fruit,seeds
+green seedless grape,grape,fruit,sweet
+green seedless grape,grape,fruit,you eat it
+green seedless grape,grape,fruit,juicy
+green seedless grape,grape,fruit,bunches
+green seedless grape,grape,fruit,makes wine
+green seedless grape,grape,fruit,grows on vine
+green seedless grape,grape,fruit,green
+green seedless grape,grape,fruit,small
+kitchen table,table,furniture,legs
+kitchen table,table,furniture,top
+kitchen table,table,furniture,surface
+kitchen table,table,furniture,wood
+kitchen table,table,furniture,you eat on it
+kitchen table,table,furniture,you put things on it
+kitchen table,table,furniture,chairs
+dining room table,table,furniture,legs
+dining room table,table,furniture,top
+dining room table,table,furniture,surface
+dining room table,table,furniture,wood
+dining room table,table,furniture,you eat on it
+dining room table,table,furniture,you put things on it
+dining room table,table,furniture,four legs
+floor lamp,lamp,furniture,light bulb
+floor lamp,lamp,furniture,shade
+floor lamp,lamp,furniture,cord
+floor lamp,lamp,furniture,switches
+floor lamp,lamp,furniture,base
+floor lamp,lamp,furniture,gives light
+floor lamp,lamp,furniture,you read by it
+desk lamp,lamp,furniture,light bulb
+desk lamp,lamp,furniture,shade
+desk lamp,lamp,furniture,cord
+desk lamp,lamp,furniture,switches
+desk lamp,lamp,furniture,base
+desk lamp,lamp,furniture,gives light
+desk lamp,lamp,furniture,you read by it
+kitchen chair,chair,furniture,legs
+kitchen chair,chair,furniture,seat
+kitchen chair,chair,furniture,back
+kitchen chair,chair,furniture,arms
+kitchen chair,chair,furniture,comfortable
+kitchen chair,chair,furniture,four legs
+kitchen chair,chair,furniture,wood
+kitchen chair,chair,furniture,holds people
+kitchen chair,chair,furniture,you sit on it
+living room chair,chair,furniture,legs
+living room chair,chair,furniture,seat
+living room chair,chair,furniture,back
+living room chair,chair,furniture,arms
+living room chair,chair,furniture,comfortable
+living room chair,chair,furniture,four legs
+living room chair,chair,furniture,wood
+living room chair,chair,furniture,holds people
+living room chair,chair,furniture,you sit on it
+living room chair,chair,furniture,large
+living room chair,chair,furniture,soft
+living room chair,chair,furniture,cushion
